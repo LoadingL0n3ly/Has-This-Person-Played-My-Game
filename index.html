@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Roblox Experience Badges Checker</title>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 2rem auto; }
+    label { display: block; margin-top: 1rem; }
+    input { width: 100%; padding: .5rem; font-size: 1rem; }
+    button { margin-top: 1rem; padding: .75rem 1.5rem; font-size: 1rem; }
+    #results { margin-top: 2rem; }
+    ul { list-style: disc inside; }
+  </style>
+</head>
+<body>
+  <h1>Has This Person Played My Game?</h1>
+    <p>Enter a Roblox place ID and a username to check which badges the user has earned in that experience (if any at all).</p>
+    <sub>If you found this tool useful, follow me on <a href="https://x.com/LoadingL0n3ly">Twitter</a>!</sub>
+
+  <label>
+    Place/Experience ID  
+    <input type="number" id="placeId" placeholder="e.g. 123456789" />
+  </label>
+  <label>
+    Username  
+    <input type="string" id="username" placeholder="e.g. LoadingL0n3ly" />
+  </label>
+  <button id="go" style="display: block; margin: 1rem auto;">Fetch Badges</button>
+
+  <div id="results"></div>
+
+  <script>
+    // shorthand DOM lookup
+    const $ = id => document.getElementById(id);
+
+    // cache elements once
+    const placeInput = $("placeId");
+    const userInput  = $("username");
+    const goButton   = $("go");
+    const results    = $("results");
+
+    async function fetchAllPages(baseUrl) {
+      let items = [];
+      let cursor = "";
+      do {
+        const url = baseUrl + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : "");
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${url}`);
+        const json = await res.json();
+        items.push(...json.data);
+        cursor = json.nextPageCursor ?? "";
+      } while (cursor);
+      return items;
+    }
+
+    async function usernameToId(username) {
+        if (!username) throw new Error("Username is required");
+        const res = await fetch("https://users.roproxy.com/v1/usernames/users", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+            usernames: [username],
+            excludeBannedUsers: false
+            })
+        });
+        const { data } = await res.json();
+        if (!data.length) throw new Error("User not found");
+        return data[0].id;
+    }
+
+
+
+    async function lookupUniverseId(placeId) {
+      const url = `https://apis.roproxy.com/universes/v1/places/${placeId}/universe`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Could not get universe for place ${placeId}`);
+      const json = await res.json();
+      return json.UniverseId ?? json.universeId;
+    }
+
+    async function onClickFetch() {
+      // grab values
+      const placeId = placeInput.value.trim();
+      const userId  = await usernameToId(userInput.value.trim());
+      results.textContent = "";
+
+      if (!placeId || !userId) {
+        results.textContent = "Both fields are required.";
+        return;
+      }
+
+      goButton.disabled = true;
+      goButton.textContent = "Loading…";
+
+      try {
+        // 1. Get universe ID
+        const universeId = await lookupUniverseId(placeId);
+
+        // 2. Fetch all badges in that universe
+        const universeBadges = await fetchAllPages(
+          `https://badges.roproxy.com/v1/universes/${universeId}/badges?limit=100&sortOrder=Asc`
+        );
+        const uniSet = new Set(universeBadges.map(b => b.id));
+
+        // 3. Fetch all badges the user has
+        const userBadges = await fetchAllPages(
+          `https://badges.roproxy.com/v1/users/${userId}/badges?limit=100&sortOrder=Asc`
+        );
+
+        console.log(userBadges)
+
+        // 4. Filter intersection
+        const ownedInGame = userBadges
+          .filter(b => uniSet.has(b.id))
+          .map(b => b.name);
+
+
+        const ul = document.createElement("ul");
+        if (userBadges.length === 0) {
+          results.textContent = "Inventory is private.";
+        } else {
+            ownedInGame.forEach(name => {
+            const li = document.createElement("li");
+            li.textContent = name;
+            ul.appendChild(li);
+          });
+
+          const h3 = document.createElement("h3");
+          h3.textContent = `Badges owned in this experience (${ownedInGame.length}):`;
+          results.appendChild(h3);
+          results.appendChild(ul);
+
+          if (results.children.length == 0) {
+            results.textContent = "No badges found in this experience, I guess they don't know you :(.";
+          }
+        }
+      } catch (err) {
+        results.textContent = "Error: " + err.message;
+      } finally {
+        goButton.disabled = false;
+        goButton.textContent = "Fetch Badges";
+      }
+    }
+
+    // bind the click handler
+    goButton.addEventListener("click", onClickFetch);
+  </script>
+</body>
+</html>
